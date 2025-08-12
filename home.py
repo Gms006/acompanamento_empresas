@@ -4,7 +4,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 import pandas as pd
-import calendar
+import plotly.express as px
+
+from app.meses import MESES_PT, MES_PARA_NUM
 
 from app.relatorio_fiscal import calcular_resumo_fiscal_mes_a_mes, gerar_excel_resumo
 from app.relatorio_fiscal import simulador_icms_manual, simulador_pis_cofins_manual  # <-- Adicione aqui
@@ -154,7 +156,7 @@ with st.sidebar:
         index=0 if anos else 0,
     )
 
-    meses_lista = [calendar.month_name[m].capitalize() for m in meses] if meses else ["Janeiro"]
+    meses_lista = [MESES_PT[m] for m in meses] if meses else [MESES_PT[1]]
     meses_lista = ["Todos"] + meses_lista
     meses_sel = st.multiselect(
         "Meses",
@@ -274,13 +276,34 @@ if tipo_relatorio == "📁 Fiscal":
         resumo_mensal = resumo_mensal_full  # já carregado acima para evitar cálculo duplo
         if resumo_mensal:
             for linha in resumo_mensal:
-                with st.expander(f"{linha['Mês']} {linha['Ano']}", expanded=(linha['Mês'] == calendar.month_name[datas.dt.month.min()].capitalize())):
+                with st.expander(f"{linha['Mês']} {linha['Ano']}", expanded=(linha['Mês'] == MESES_PT[datas.dt.month.min()])):
                     col_a, col_b, col_c = st.columns(3)
                     col_a.markdown(f"<div class='card blue'>TOTAL ENTRADAS<br><b>{format_brl(linha['Entradas (Revenda + Frete)'])}</b></div>", unsafe_allow_html=True)
                     col_b.markdown(f"<div class='card blue'>TOTAL SAÍDAS<br><b>{format_brl(linha['Saídas'])}</b></div>", unsafe_allow_html=True)
                     resultado = linha['Resultado Líquido']
                     cor_resultado = "green" if resultado >= 0 else "red"
                     col_c.markdown(f"<div class='card {cor_resultado}'>RESULTADO<br><b>{format_brl(resultado)}</b></div>", unsafe_allow_html=True)
+
+                    view_mode = st.radio(
+                        "Ver",
+                        ["Por mês", "Total"],
+                        key=f"view_{linha['Ano']}_{linha['Mês']}",
+                        horizontal=True,
+                    )
+                    if view_mode == "Por mês":
+                        valores = [
+                            linha["Entradas (Revenda + Frete)"],
+                            linha["Saídas"],
+                        ]
+                    else:
+                        total_ent = sum(l["Entradas (Revenda + Frete)"] for l in resumo_mensal)
+                        total_sai = sum(l["Saídas"] for l in resumo_mensal)
+                        valores = [total_ent, total_sai]
+                    df_bar = pd.DataFrame({"Tipo": ["Entradas", "Saídas"], "Valor": valores})
+                    fig = px.bar(df_bar, x="Tipo", y="Valor", text="Valor", template="plotly_dark")
+                    fig.update_traces(texttemplate="R$ %{y:,.2f}", textposition="outside")
+                    fig.update_layout(margin=dict(t=30, b=10))
+                    st.plotly_chart(fig, use_container_width=True)
 
                     st.markdown("<div class='titulo-apuracao'>APURAÇÃO ICMS</div>", unsafe_allow_html=True)
                     c1, c2, c3, c4 = st.columns(4)

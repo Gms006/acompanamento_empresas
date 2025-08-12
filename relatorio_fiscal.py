@@ -1,10 +1,11 @@
 import streamlit as st
 import pandas as pd
-import calendar
 import logging
 import re
 from pathlib import Path
 from io import BytesIO
+
+from .meses import MESES_PT, MES_PARA_NUM
 
 # Configuração de log detalhado
 LOG_PATH = Path(__file__).resolve().parent / "reports" / "relatorio_fiscal_debug.log"
@@ -48,20 +49,66 @@ def moeda_to_float(valor_texto):
     except:
         return 0.0
 
-def calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_sel):
+
+def _saldo_inicial_acumulado(df, ano, mes_inicial):
+    """Calcula créditos acumulados de ICMS e PIS/COFINS antes de ``mes_inicial``."""
+    df = df.copy()
+    df["Data Emissão"] = pd.to_datetime(df["Data Emissão"], format="%d/%m/%Y", errors="coerce")
+    df = df[(df["Data Emissão"].dt.year == ano) & (df["Data Emissão"].dt.month < mes_inicial)]
+    if df.empty:
+        return 0.0, 0.0
+
+    meses = sorted(df["Data Emissão"].dt.month.dropna().unique())
+    credito_icms = 0.0
+    credito_pc = 0.0
+    for mes in meses:
+        df_mes = df[df["Data Emissão"].dt.month == mes]
+
+        filtro_entradas = (
+            df_mes["Tipo"].eq("Entrada") &
+            df_mes["Classificação"].str.contains(r"(Mercadoria para Revenda|Frete)", case=False, na=False)
+        )
+        df_entradas = df_mes[filtro_entradas].copy()
+        filtro_saidas = df_mes["Tipo"].eq("Saída")
+        df_saidas = df_mes[filtro_saidas].copy()
+
+        total_liq_entradas = parse_col(df_entradas.get("Valor Líquido", pd.Series(dtype=str))).sum()
+        total_liq_saidas = parse_col(df_saidas.get("Valor Líquido", pd.Series(dtype=str))).sum()
+
+        total_icms_entradas = parse_col(df_entradas.get("Valor ICMS", pd.Series(dtype=str))).sum()
+        total_icms_saidas = parse_col(df_saidas.get("Valor ICMS", pd.Series(dtype=str))).sum()
+
+        credito_total_icms = credito_icms + total_icms_entradas
+        saldo_icms = credito_total_icms - total_icms_saidas
+        credito_icms = saldo_icms if saldo_icms > 0 else 0.0
+
+        pis_cof_entradas = total_liq_entradas * 0.0925
+        pis_cof_saidas = total_liq_saidas * 0.0925
+        credito_total_pc = credito_pc + pis_cof_entradas
+        saldo_pc = credito_total_pc - pis_cof_saidas
+        credito_pc = saldo_pc if saldo_pc > 0 else 0.0
+
+    return credito_icms, credito_pc
+
+def calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_sel, considerar_acumulo_previos=True):
     try:
         df = df.copy()
         df["Data Emissão"] = pd.to_datetime(df["Data Emissão"], format="%d/%m/%Y", errors="coerce")
         df = df[df["Data Emissão"].dt.year == ano_sel]
 
-        nome_para_num = {calendar.month_name[m].capitalize(): m for m in range(1, 13)}
         if meses_sel and "Todos" not in meses_sel:
-            meses_num = [nome_para_num.get(m, None) for m in meses_sel if m in nome_para_num]
+            meses_num = [MES_PARA_NUM.get(m, None) for m in meses_sel if m in MES_PARA_NUM]
         else:
             meses_num = sorted(df["Data Emissão"].dt.month.dropna().unique())
 
         credito_icms_acumulado = 0.0
         credito_pis_cofins_acumulado = 0.0
+        if considerar_acumulo_previos and meses_num:
+            mes_base = min(meses_num)
+            credito_icms_acumulado, credito_pis_cofins_acumulado = _saldo_inicial_acumulado(
+                df, ano_sel, mes_base
+            )
+
         relatorio_mensal = []
 
         for mes in sorted(meses_num):
@@ -117,7 +164,7 @@ def calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_sel):
 
             relatorio_mensal.append({
                 "Ano": ano_sel,
-                "Mês": calendar.month_name[mes].capitalize(),
+                "Mês": MESES_PT[mes],
                 "Entradas (Revenda + Frete)": total_liq_entradas,
                 "Saídas": total_liq_saidas,
                 "Resultado Líquido": resultado_liq,
@@ -162,7 +209,7 @@ def mostrar_resumo_fiscal(df, ano_sel=None, meses_sel=None):
 
     # Cards de ICMS
     todos_meses = calcular_resumo_fiscal_mes_a_mes(
-        df, ano_sel, [calendar.month_name[m].capitalize() for m in range(1, 13)]
+        df, ano_sel, [MESES_PT[m] for m in range(1, 13)]
     )
     if todos_meses:
         ultimo = todos_meses[-1]
@@ -245,7 +292,7 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
         if meses_sel:
             meses_param = meses_sel
         else:
-            meses_param = [calendar.month_name[m].capitalize() for m in range(1, 13)]
+            meses_param = [MESES_PT[m] for m in range(1, 13)]
         
         todos_meses = calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_param)
         if todos_meses:
@@ -608,7 +655,7 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
         if meses_sel:
             meses_param = meses_sel
         else:
-            meses_param = [calendar.month_name[m].capitalize() for m in range(1, 13)]
+            meses_param = [MESES_PT[m] for m in range(1, 13)]
         todos_meses = calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_param)
         if todos_meses:
             credito_acumulado = todos_meses[-1].get('Crédito PIS/COFINS Transportado', 0.0)
