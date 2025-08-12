@@ -96,8 +96,12 @@ def calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_sel, considerar_acumulo_
         df["Data Emissão"] = pd.to_datetime(df["Data Emissão"], format="%d/%m/%Y", errors="coerce")
         df = df[df["Data Emissão"].dt.year == ano_sel]
 
-        if meses_sel and "Todos" not in meses_sel:
-            meses_num = [MES_PARA_NUM.get(m, None) for m in meses_sel if m in MES_PARA_NUM]
+        if meses_sel:
+            if all(isinstance(m, int) for m in meses_sel):
+                meses_num = meses_sel
+            else:
+                meses_num = [MES_PARA_NUM.get(m, None) for m in meses_sel if m in MES_PARA_NUM]
+            meses_num = [m for m in meses_num if m]
         else:
             meses_num = sorted(df["Data Emissão"].dt.month.dropna().unique())
 
@@ -209,7 +213,7 @@ def mostrar_resumo_fiscal(df, ano_sel=None, meses_sel=None):
 
     # Cards de ICMS
     todos_meses = calcular_resumo_fiscal_mes_a_mes(
-        df, ano_sel, [MESES_PT[m] for m in range(1, 13)]
+        df, ano_sel, list(range(1, 13))
     )
     if todos_meses:
         ultimo = todos_meses[-1]
@@ -292,8 +296,8 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
         if meses_sel:
             meses_param = meses_sel
         else:
-            meses_param = [MESES_PT[m] for m in range(1, 13)]
-        
+            meses_param = list(range(1, 13))
+
         todos_meses = calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_param)
         if todos_meses:
             credito_acumulado = todos_meses[-1].get('Crédito ICMS Transportado', 0.0)
@@ -655,7 +659,7 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
         if meses_sel:
             meses_param = meses_sel
         else:
-            meses_param = [MESES_PT[m] for m in range(1, 13)]
+            meses_param = list(range(1, 13))
         todos_meses = calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_param)
         if todos_meses:
             credito_acumulado = todos_meses[-1].get('Crédito PIS/COFINS Transportado', 0.0)

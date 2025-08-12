@@ -163,6 +163,10 @@ with st.sidebar:
         options=meses_lista,
         default=["Todos"],
     )
+    if "Todos" in meses_sel:
+        meses_sel = list(range(1, 13))
+    else:
+        meses_sel = [MES_PARA_NUM[m] for m in meses_sel]
 
     st.markdown("---")
     st.markdown(
@@ -266,8 +270,7 @@ if tipo_relatorio == "📁 Fiscal" and relatorio_escolhido == "Apuração de Tri
                 f"<div class='card-destaque-green'>Crédito PIS/COFINS a Transportar<br><span style='font-size:1.15em;'>{format_brl(pis_credito)}</span></div>",
                 unsafe_allow_html=True
             )
-
-st.markdown("---")
+    st.markdown("---")
 st.subheader("Relatórios disponíveis")
 
 # RESTANTE: idêntico ao anterior...
