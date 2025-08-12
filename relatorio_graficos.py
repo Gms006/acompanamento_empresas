@@ -206,7 +206,7 @@ def mostrar_entradas_saidas(
     """
 
     ano_sel = anos[0] if isinstance(anos, (list, tuple)) else anos
-    meses_num = meses if meses else list(range(1, 13))
+    meses_num = sorted(set(meses)) if meses else list(range(1, 13))
 
     def prepara(df: pd.DataFrame, is_entrada: bool) -> pd.DataFrame:
         df = df.copy()
@@ -230,23 +230,12 @@ def mostrar_entradas_saidas(
     df_ent = prepara(df_entradas, True)
     df_sai = prepara(df_saidas, False)
 
-    ent_mes = df_ent.groupby(df_ent["Data Emissão"].dt.month)["Valor Líquido"].sum()
-    sai_mes = df_sai.groupby(df_sai["Data Emissão"].dt.month)["Valor Líquido"].sum()
-    df_mes = pd.concat([ent_mes, sai_mes], axis=1).fillna(0)
-    df_mes.columns = ["Entradas", "Saídas"]
-    df_mes = df_mes.reset_index()
-
-    col0 = df_mes.columns[0]
-    df_mes = df_mes.rename(columns={col0: "mes"})
-    if "mes" not in df_mes.columns:
-        if "Mês" in df_mes.columns:
-            inv = {v: k for k, v in MESES_PT.items()}
-            df_mes["mes"] = df_mes["Mês"].map(inv)
-        elif "Data Emissão" in df_mes.columns:
-            df_mes["mes"] = pd.to_datetime(
-                df_mes["Data Emissão"], errors="coerce"
-            ).dt.month
-
+    mostrar_por_mes = set(meses_num) == set(range(1, 13))
+    idx = range(1, 13) if mostrar_por_mes else sorted(meses_num)
+    ent_mes = df_ent.groupby(df_ent["Data Emissão"].dt.month)["Valor Líquido"].sum().reindex(idx, fill_value=0)
+    sai_mes = df_sai.groupby(df_sai["Data Emissão"].dt.month)["Valor Líquido"].sum().reindex(idx, fill_value=0)
+    df_mes = pd.concat([ent_mes, sai_mes], axis=1).fillna(0).reset_index()
+    df_mes.columns = ["mes", "Entradas", "Saídas"]
     df_mes["Mês"] = df_mes["mes"].map(MESES_PT)
     df_mes = df_mes.sort_values("mes")
 
@@ -254,8 +243,6 @@ def mostrar_entradas_saidas(
         '<h2 class="section-title">Entradas x Saídas por Período</h2>',
         unsafe_allow_html=True,
     )
-
-    mostrar_por_mes = set(meses_num) == set(range(1, 13))
     if mostrar_por_mes:
         df_plot = df_mes.melt(
             id_vars=["Mês"],
@@ -402,7 +389,7 @@ def mostrar_dashboard(df_entradas: pd.DataFrame,
 
     # 1) Período
     ano_sel = anos[0] if isinstance(anos, (list, tuple)) else anos
-    meses_num = meses if meses else list(range(1, 13))
+    meses_num = sorted(set(meses)) if meses else list(range(1, 13))
 
     # 2) Filtrar
     def filtrar(df: pd.DataFrame) -> pd.DataFrame:

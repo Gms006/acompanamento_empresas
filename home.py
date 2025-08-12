@@ -4,7 +4,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 
 from app.meses import MESES_PT, MES_PARA_NUM
 
@@ -156,17 +155,16 @@ with st.sidebar:
         index=0 if anos else 0,
     )
 
-    meses_lista = [MESES_PT[m] for m in meses] if meses else [MESES_PT[1]]
-    meses_lista = ["Todos"] + meses_lista
+    meses_lista = ["Todos os meses"] + [MESES_PT[m] for m in range(1, 13)]
     meses_sel = st.multiselect(
         "Meses",
         options=meses_lista,
-        default=["Todos"],
+        default=["Todos os meses"],
     )
-    if "Todos" in meses_sel:
+    if "Todos os meses" in meses_sel or not meses_sel:
         meses_sel = list(range(1, 13))
     else:
-        meses_sel = [MES_PARA_NUM[m] for m in meses_sel]
+        meses_sel = sorted({MES_PARA_NUM[m] for m in meses_sel})
 
     st.markdown("---")
     st.markdown(
@@ -279,36 +277,14 @@ if tipo_relatorio == "📁 Fiscal":
         resumo_mensal = resumo_mensal_full  # já carregado acima para evitar cálculo duplo
         if resumo_mensal:
             for linha in resumo_mensal:
-                with st.expander(f"{linha['Mês']} {linha['Ano']}", expanded=(linha['Mês'] == MESES_PT[datas.dt.month.min()])):
-                    col_a, col_b, col_c = st.columns(3)
-                    col_a.markdown(f"<div class='card blue'>TOTAL ENTRADAS<br><b>{format_brl(linha['Entradas (Revenda + Frete)'])}</b></div>", unsafe_allow_html=True)
-                    col_b.markdown(f"<div class='card blue'>TOTAL SAÍDAS<br><b>{format_brl(linha['Saídas'])}</b></div>", unsafe_allow_html=True)
-                    resultado = linha['Resultado Líquido']
-                    cor_resultado = "green" if resultado >= 0 else "red"
-                    col_c.markdown(f"<div class='card {cor_resultado}'>RESULTADO<br><b>{format_brl(resultado)}</b></div>", unsafe_allow_html=True)
-
-                    view_mode = st.radio(
-                        "Ver",
-                        ["Por mês", "Total"],
-                        key=f"view_{linha['Ano']}_{linha['Mês']}",
-                        horizontal=True,
+                with st.expander(
+                    f"{linha['Mês']} {linha['Ano']}",
+                    expanded=(linha['Mês'] == MESES_PT[datas.dt.month.min()]),
+                ):
+                    st.markdown(
+                        "<div class='titulo-apuracao'>APURAÇÃO ICMS</div>",
+                        unsafe_allow_html=True,
                     )
-                    if view_mode == "Por mês":
-                        valores = [
-                            linha["Entradas (Revenda + Frete)"],
-                            linha["Saídas"],
-                        ]
-                    else:
-                        total_ent = sum(l["Entradas (Revenda + Frete)"] for l in resumo_mensal)
-                        total_sai = sum(l["Saídas"] for l in resumo_mensal)
-                        valores = [total_ent, total_sai]
-                    df_bar = pd.DataFrame({"Tipo": ["Entradas", "Saídas"], "Valor": valores})
-                    fig = px.bar(df_bar, x="Tipo", y="Valor", text="Valor", template="plotly_dark")
-                    fig.update_traces(texttemplate="R$ %{y:,.2f}", textposition="outside")
-                    fig.update_layout(margin=dict(t=30, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
-
-                    st.markdown("<div class='titulo-apuracao'>APURAÇÃO ICMS</div>", unsafe_allow_html=True)
                     c1, c2, c3, c4 = st.columns(4)
                     c1.markdown(f"<div class='card'>ICMS ENTRADA<br><b>{format_brl(linha['ICMS Entradas'])}</b></div>", unsafe_allow_html=True)
                     c2.markdown(f"<div class='card'>ICMS SAÍDA<br><b>{format_brl(linha['ICMS Saídas'])}</b></div>", unsafe_allow_html=True)
