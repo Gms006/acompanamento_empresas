@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from app.meses import MESES_PT, MES_PARA_NUM
-from app.relatorio_fiscal import calcular_resumo_fiscal_mes_a_mes
+from app.relatorio_fiscal import calcular_resumo_fiscal_mes_a_mes, parse_col
 
 def brl_format(val: float) -> str:
     """Formata número para R$ 1.234.567,89"""
@@ -190,7 +190,6 @@ def create_modern_bar_chart(df, x_col, y_col, color_col, title, color_map, templ
 def mostrar_entradas_saidas(
     df_entradas: pd.DataFrame,
     df_saidas: pd.DataFrame,
-    anos: list[int],
     meses: list[str],
     somente_tributaveis: bool = False,
 ):
@@ -198,74 +197,42 @@ def mostrar_entradas_saidas(
 
     Parâmetros
     ----------
-    df_entradas, df_saidas : DataFrames das notas.
-    anos : lista contendo o ano selecionado.
-    meses : lista com os meses em português.
+    df_entradas, df_saidas : DataFrames das notas já filtradas.
+    meses : lista com os meses selecionados (em português).
     somente_tributaveis : quando True, filtra apenas
         entradas classificadas como Mercadoria para Revenda ou Frete.
     """
 
-    ano_sel = anos[0] if isinstance(anos, (list, tuple)) else anos
-    meses_num = (
-        list(range(1, 13))
-        if "Todos" in meses
-        else [MES_PARA_NUM[m] for m in meses if m in MES_PARA_NUM]
-    )
+    df_ent = df_entradas.copy()
+    df_sai = df_saidas.copy()
 
-    def prepara(df: pd.DataFrame, is_entrada: bool) -> pd.DataFrame:
-        df = df.copy()
-        df["Data Emissão"] = pd.to_datetime(
-            df["Data Emissão"], format="%d/%m/%Y", errors="coerce"
-        )
-        df = df[
-            (df["Data Emissão"].dt.year == ano_sel)
-            & (df["Data Emissão"].dt.month.isin(meses_num))
+    df_ent["Valor Líquido"] = parse_col(df_ent.get("Valor Líquido", pd.Series(dtype=str)), "Valor Líquido Entradas")
+    df_sai["Valor Líquido"] = parse_col(df_sai.get("Valor Líquido", pd.Series(dtype=str)), "Valor Líquido Saídas")
+
+    df_ent["Data Emissão"] = pd.to_datetime(df_ent["Data Emissão"], format="%d/%m/%Y", errors="coerce")
+    df_sai["Data Emissão"] = pd.to_datetime(df_sai["Data Emissão"], format="%d/%m/%Y", errors="coerce")
+
+    if somente_tributaveis:
+        df_ent = df_ent[
+            df_ent["Classificação"].str.contains(
+                r"(Mercadoria para Revenda|Frete)", case=False, na=False
+            )
         ]
-        if is_entrada and somente_tributaveis:
-            df = df[
-                df["Classificação"].str.contains(
-                    r"(Mercadoria para Revenda|Frete)",
-                    case=False,
-                    na=False,
-                )
-            ]
-        return df
 
-    df_ent = prepara(df_entradas, True)
-    df_sai = prepara(df_saidas, False)
-
-    ent_mes = df_ent.groupby(df_ent["Data Emissão"].dt.month)["Valor Líquido"].sum()
-    sai_mes = df_sai.groupby(df_sai["Data Emissão"].dt.month)["Valor Líquido"].sum()
-    df_mes = pd.concat([ent_mes, sai_mes], axis=1).fillna(0)
-    df_mes.columns = ["Entradas", "Saídas"]
-    df_mes = df_mes.reset_index()
-
-    col0 = df_mes.columns[0]
-    df_mes = df_mes.rename(columns={col0: "mes"})
-    if "mes" not in df_mes.columns:
-        if "Mês" in df_mes.columns:
-            inv = {v: k for k, v in MESES_PT.items()}
-            df_mes["mes"] = df_mes["Mês"].map(inv)
-        elif "Data Emissão" in df_mes.columns:
-            df_mes["mes"] = pd.to_datetime(
-                df_mes["Data Emissão"], errors="coerce"
-            ).dt.month
-
-    df_mes["Mês"] = df_mes["mes"].map(MESES_PT)
-    df_mes = df_mes.sort_values("mes")
+    selected_nums = [MES_PARA_NUM[m] for m in meses if m in MES_PARA_NUM]
+    is_full_year = set(selected_nums) == set(range(1, 13))
 
     st.markdown(
         '<h2 class="section-title">Entradas x Saídas por Período</h2>',
         unsafe_allow_html=True,
     )
-    modo_es = st.radio(
-        "Ver",
-        ["Por mês", "Total"],
-        horizontal=True,
-        key=f"es_{somente_tributaveis}_{ano_sel}",
-    )
 
-    if modo_es == "Por mês":
+    if is_full_year:
+        ent_mes = df_ent.groupby(df_ent["Data Emissão"].dt.month)["Valor Líquido"].sum()
+        sai_mes = df_sai.groupby(df_sai["Data Emissão"].dt.month)["Valor Líquido"].sum()
+        df_mes = pd.DataFrame({"Entradas": ent_mes, "Saídas": sai_mes})
+        df_mes = df_mes.reindex(range(1, 13), fill_value=0).reset_index().rename(columns={"index": "mes"})
+        df_mes["Mês"] = df_mes["mes"].map(MESES_PT)
         df_plot = df_mes.melt(
             id_vars=["Mês"],
             value_vars=["Entradas", "Saídas"],
@@ -282,11 +249,9 @@ def mostrar_entradas_saidas(
             {"Entradas": "#1f77b4", "Saídas": "#ff7f0e"},
         )
     else:
-        total_ent = df_mes["Entradas"].sum()
-        total_sai = df_mes["Saídas"].sum()
-        df_total = pd.DataFrame(
-            {"Tipo": ["Entradas", "Saídas"], "Valor": [total_ent, total_sai]}
-        )
+        total_ent = df_ent["Valor Líquido"].sum()
+        total_sai = df_sai["Valor Líquido"].sum()
+        df_total = pd.DataFrame({"Tipo": ["Entradas", "Saídas"], "Valor": [total_ent, total_sai]})
         df_total["LabelAbbr"] = df_total["Valor"].apply(abbr_format)
         fig_es = create_modern_bar_chart(
             df_total,
@@ -298,8 +263,6 @@ def mostrar_entradas_saidas(
         )
 
     st.plotly_chart(fig_es, use_container_width=True)
-
-    return df_mes
 
 def create_modern_pie_chart(df, names_col, values_col, title):
     """Cria gráfico de pizza com design moderno e melhor contraste"""
@@ -406,12 +369,9 @@ def mostrar_dashboard(df_entradas: pd.DataFrame,
     </style>
     """, unsafe_allow_html=True)
 
-    # Título principal
-    st.markdown('<h1 class="main-title">Apuração Fiscal</h1>', unsafe_allow_html=True)
-
     # 1) Período
     ano_sel = anos[0] if isinstance(anos, (list, tuple)) else anos
-    meses_num = list(range(1, 13)) if "Todos" in meses else [MES_PARA_NUM[m] for m in meses if m in MES_PARA_NUM]
+    meses_num = [MES_PARA_NUM[m] for m in meses if m in MES_PARA_NUM]
 
     # 2) Filtrar
     def filtrar(df: pd.DataFrame) -> pd.DataFrame:
@@ -422,8 +382,12 @@ def mostrar_dashboard(df_entradas: pd.DataFrame,
             (df["Data Emissão"].dt.month.isin(meses_num))
         ]
 
-    df_ent = filtrar(df_entradas)
-    df_sai = filtrar(df_saidas)
+    df_ent_raw = filtrar(df_entradas)
+    df_sai_raw = filtrar(df_saidas)
+    df_ent = df_ent_raw.copy()
+    df_sai = df_sai_raw.copy()
+    df_ent["Valor Líquido"] = parse_col(df_ent.get("Valor Líquido", pd.Series(dtype=str)), "Valor Líquido Entradas")
+    df_sai["Valor Líquido"] = parse_col(df_sai.get("Valor Líquido", pd.Series(dtype=str)), "Valor Líquido Saídas")
 
     # 3) KPI Cards customizados
     total_ent = df_ent["Valor Líquido"].sum()
@@ -432,7 +396,7 @@ def mostrar_dashboard(df_entradas: pd.DataFrame,
 
     st.markdown(create_kpi_cards_html(total_ent, total_sai, saldo), unsafe_allow_html=True)
 
-    mostrar_entradas_saidas(df_ent, df_sai, [ano_sel], meses)
+    mostrar_entradas_saidas(df_ent, df_sai, meses)
 
     # 1) Mercadorias por Estado
     st.markdown('<h2 class="section-title">Mercadorias por Estado</h2>', unsafe_allow_html=True)
@@ -472,7 +436,7 @@ def mostrar_dashboard(df_entradas: pd.DataFrame,
 
     # 3) ICMS
     st.markdown('<h2 class="section-title">Crédito x Débito de ICMS</h2>', unsafe_allow_html=True)
-    df_all = pd.concat([df_ent, df_sai], ignore_index=True)
+    df_all = pd.concat([df_ent_raw, df_sai_raw], ignore_index=True)
     rel_ic = calcular_resumo_fiscal_mes_a_mes(df_all, ano_sel, meses)
     df_ic = pd.DataFrame(rel_ic)
     df_ic["mes_num"] = df_ic["Mês"].map(MES_PARA_NUM)

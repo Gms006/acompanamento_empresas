@@ -4,14 +4,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 
 from app.meses import MESES_PT, MES_PARA_NUM
 
 from app.relatorio_fiscal import calcular_resumo_fiscal_mes_a_mes, gerar_excel_resumo
 from app.relatorio_fiscal import simulador_icms_manual, simulador_pis_cofins_manual  # <-- Adicione aqui
 from app.relatorio_contabil import mostrar_resumo_contabil
-from app.relatorio_graficos import mostrar_dashboard, mostrar_entradas_saidas
+from app.relatorio_graficos import mostrar_dashboard
 
 DATA_PATH = Path(r"U:\Automações PYTHON\Acompanhamento de empresas\data\notas_fiscais.xlsx")
 LOGO_PATH = Path(r"U:\Automações PYTHON\Acompanhamento de empresas\assets\logo.png")
@@ -156,13 +155,14 @@ with st.sidebar:
         index=0 if anos else 0,
     )
 
-    meses_lista = [MESES_PT[m] for m in meses] if meses else [MESES_PT[1]]
-    meses_lista = ["Todos"] + meses_lista
+    meses_lista = ["Todos os meses"] + [MESES_PT[m] for m in range(1, 13)]
     meses_sel = st.multiselect(
         "Meses",
         options=meses_lista,
-        default=["Todos"],
+        default=["Todos os meses"],
     )
+    if "Todos os meses" in meses_sel or not meses_sel:
+        meses_sel = [MESES_PT[m] for m in range(1, 13)]
 
     st.markdown("---")
     st.markdown(
@@ -223,7 +223,12 @@ with st.sidebar:
             key="rel_dash"
         )
 
-st.title("Apuração Fiscal")
+if tipo_relatorio == "📁 Fiscal":
+    st.title("Fiscal")
+elif tipo_relatorio == "📊 Contábil":
+    st.title("Contábil")
+elif tipo_relatorio == "📈 Dashboards":
+    st.title("Dashboards")
 
 # --------- APURAÇÃO DO PERÍODO VIGENTE -----------
 if tipo_relatorio == "📁 Fiscal" and relatorio_escolhido == "Apuração de Tributos Fiscais":
@@ -266,15 +271,6 @@ if tipo_relatorio == "📁 Fiscal" and relatorio_escolhido == "Apuração de Tri
                 f"<div class='card-destaque-green'>Crédito PIS/COFINS a Transportar<br><span style='font-size:1.15em;'>{format_brl(pis_credito)}</span></div>",
                 unsafe_allow_html=True
             )
-        entradas_fiscal = df[df['Tipo'].eq('Entrada')]
-        saidas_fiscal = df[df['Tipo'].eq('Saída')]
-        mostrar_entradas_saidas(
-            entradas_fiscal,
-            saidas_fiscal,
-            [ano_sel],
-            meses_sel,
-            somente_tributaveis=True,
-        )
 
 
 st.markdown("---")
@@ -293,27 +289,6 @@ if tipo_relatorio == "📁 Fiscal":
                     resultado = linha['Resultado Líquido']
                     cor_resultado = "green" if resultado >= 0 else "red"
                     col_c.markdown(f"<div class='card {cor_resultado}'>RESULTADO<br><b>{format_brl(resultado)}</b></div>", unsafe_allow_html=True)
-
-                    view_mode = st.radio(
-                        "Ver",
-                        ["Por mês", "Total"],
-                        key=f"view_{linha['Ano']}_{linha['Mês']}",
-                        horizontal=True,
-                    )
-                    if view_mode == "Por mês":
-                        valores = [
-                            linha["Entradas (Revenda + Frete)"],
-                            linha["Saídas"],
-                        ]
-                    else:
-                        total_ent = sum(l["Entradas (Revenda + Frete)"] for l in resumo_mensal)
-                        total_sai = sum(l["Saídas"] for l in resumo_mensal)
-                        valores = [total_ent, total_sai]
-                    df_bar = pd.DataFrame({"Tipo": ["Entradas", "Saídas"], "Valor": valores})
-                    fig = px.bar(df_bar, x="Tipo", y="Valor", text="Valor", template="plotly_dark")
-                    fig.update_traces(texttemplate="R$ %{y:,.2f}", textposition="outside")
-                    fig.update_layout(margin=dict(t=30, b=10))
-                    st.plotly_chart(fig, use_container_width=True)
 
                     st.markdown("<div class='titulo-apuracao'>APURAÇÃO ICMS</div>", unsafe_allow_html=True)
                     c1, c2, c3, c4 = st.columns(4)
