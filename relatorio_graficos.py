@@ -230,8 +230,8 @@ def mostrar_entradas_saidas(
     df_ent = prepara(df_entradas, True)
     df_sai = prepara(df_saidas, False)
 
-    mostrar_por_mes = set(meses_num) == set(range(1, 13))
-    idx = range(1, 13) if mostrar_por_mes else sorted(meses_num)
+    is_full_year = set(meses_num) == set(range(1, 13))
+    idx = range(1, 13) if is_full_year else sorted(meses_num)
 
     ent_mes = (
         df_ent.groupby(df_ent["Data Emissão"].dt.month)["Valor Líquido"].sum()
@@ -263,6 +263,8 @@ def mostrar_entradas_saidas(
         '<h2 class="section-title">Entradas x Saídas por Período</h2>',
         unsafe_allow_html=True,
     )
+
+    if is_full_year:
         df_plot = df_mes.melt(
             id_vars=["Mês"],
             value_vars=["Entradas", "Saídas"],
