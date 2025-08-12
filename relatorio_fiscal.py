@@ -4,6 +4,9 @@ import logging
 import re
 from pathlib import Path
 from io import BytesIO
+from datetime import datetime
+from typing import List, Dict
+import plotly.express as px
 
 from .meses import MESES_PT, MES_PARA_NUM
 
@@ -90,14 +93,100 @@ def _saldo_inicial_acumulado(df, ano, mes_inicial):
 
     return credito_icms, credito_pc
 
+
+def _ultimo_mes_vigente(
+    df_entradas: pd.DataFrame | None, df_saidas: pd.DataFrame | None
+) -> tuple[int, int]:
+    """Determina ano e mês vigentes com base na maior data de emissão."""
+    entradas = pd.to_datetime(
+        df_entradas["Data Emissão"] if df_entradas is not None else [],
+        format="%d/%m/%Y",
+        errors="coerce",
+    )
+    saídas = pd.to_datetime(
+        df_saidas["Data Emissão"] if df_saidas is not None else [],
+        format="%d/%m/%Y",
+        errors="coerce",
+    )
+    maior_data = pd.concat([entradas, saídas]).dropna().max()
+    if pd.isna(maior_data):
+        hoje = datetime.today()
+        return hoje.year, hoje.month
+    return int(maior_data.year), int(maior_data.month)
+
+
+def _credito_acumulado_atual(
+    df_all: pd.DataFrame | None,
+    ano_vig: int,
+    mes_vig: int,
+    meses_pt: Dict[int, str],
+    imposto: str,
+) -> float:
+    """Obtém o crédito acumulado do mês anterior ao vigente."""
+    if df_all is None or df_all.empty or mes_vig <= 1:
+        return 0.0
+    meses_anteriores = list(range(1, mes_vig))
+    resumo = calcular_resumo_fiscal_mes_a_mes(df_all, ano_vig, meses_anteriores)
+    if not resumo:
+        return 0.0
+    ultimo = resumo[-1]
+    if imposto == "ICMS":
+        return float(ultimo.get("Crédito ICMS Transportado", 0.0))
+    return float(ultimo.get("Crédito PIS/COFINS Transportado", 0.0))
+
+
+def _rollforward(
+    credito_inicial: float,
+    serie_creditos: List[float],
+    serie_debitos: List[float],
+) -> List[Dict[str, float]]:
+    """Executa rollforward mês a mês."""
+    credito_atual = float(credito_inicial)
+    resultados: List[Dict[str, float]] = []
+    for cred, deb in zip(serie_creditos, serie_debitos):
+        consumo = min(deb, credito_atual + cred)
+        a_pagar = max(deb - (credito_atual + cred), 0.0)
+        credito_final = max(credito_atual + cred - consumo, 0.0)
+        resultados.append(
+            {
+                "Crédito Inicial": credito_atual,
+                "Crédito do Mês": cred,
+                "Débito do Mês": deb,
+                "A Pagar": a_pagar,
+                "Crédito Final": credito_final,
+            }
+        )
+        credito_atual = credito_final
+    return resultados
+
+
+def _grade_futura(
+    ano_vig: int, mes_vig: int, horizonte: int, meses_pt: Dict[int, str]
+) -> pd.DataFrame:
+    """Gera grade de períodos futuros a partir do mês vigente."""
+    inicio = pd.Timestamp(year=ano_vig, month=mes_vig, day=1)
+    periodos = pd.date_range(start=inicio, periods=horizonte, freq="MS")
+    df = pd.DataFrame(
+        {
+            "Período(YYYY-MM)": periodos.strftime("%Y-%m"),
+            "Ano": periodos.year,
+            "Mês": [meses_pt[m] for m in periodos.month],
+        }
+    )
+    return df
+
 def calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_sel, considerar_acumulo_previos=True):
     try:
         df = df.copy()
         df["Data Emissão"] = pd.to_datetime(df["Data Emissão"], format="%d/%m/%Y", errors="coerce")
         df = df[df["Data Emissão"].dt.year == ano_sel]
 
-        if meses_sel and "Todos" not in meses_sel:
-            meses_num = [MES_PARA_NUM.get(m, None) for m in meses_sel if m in MES_PARA_NUM]
+        if meses_sel:
+            if all(isinstance(m, int) for m in meses_sel):
+                meses_num = meses_sel
+            else:
+                meses_num = [MES_PARA_NUM.get(m, None) for m in meses_sel if m in MES_PARA_NUM]
+            meses_num = [m for m in meses_num if m]
         else:
             meses_num = sorted(df["Data Emissão"].dt.month.dropna().unique())
 
@@ -209,7 +298,7 @@ def mostrar_resumo_fiscal(df, ano_sel=None, meses_sel=None):
 
     # Cards de ICMS
     todos_meses = calcular_resumo_fiscal_mes_a_mes(
-        df, ano_sel, [MESES_PT[m] for m in range(1, 13)]
+        df, ano_sel, list(range(1, 13))
     )
     if todos_meses:
         ultimo = todos_meses[-1]
@@ -292,8 +381,8 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
         if meses_sel:
             meses_param = meses_sel
         else:
-            meses_param = [MESES_PT[m] for m in range(1, 13)]
-        
+            meses_param = list(range(1, 13))
+
         todos_meses = calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_param)
         if todos_meses:
             credito_acumulado = todos_meses[-1].get('Crédito ICMS Transportado', 0.0)
@@ -635,8 +724,79 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
                     </div>
                 </div>
             """, unsafe_allow_html=True)
-            
+
             st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    with st.expander("Simulação meses futuros (manual)"):
+        df_ent = df[df["Tipo"].eq("Entrada")] if df is not None else None
+        df_sai = df[df["Tipo"].eq("Saída")] if df is not None else None
+        ano_vig, mes_vig = _ultimo_mes_vigente(df_ent, df_sai)
+        horizonte = st.number_input(
+            "Horizonte (meses)",
+            min_value=1,
+            max_value=24,
+            value=6,
+            step=1,
+            key="icms_horizonte",
+        )
+        grade = _grade_futura(ano_vig, mes_vig, int(horizonte), MESES_PT)
+        for c in [
+            "Entrada_4",
+            "Entrada_7",
+            "Entrada_12",
+            "Entrada_19",
+            "Saída_11",
+            "Saída_12",
+            "Saída_19",
+        ]:
+            grade[c] = None
+        edit = st.data_editor(
+            grade,
+            num_rows="fixed",
+            column_config={
+                "Período(YYYY-MM)": st.column_config.TextColumn("Período", disabled=True),
+                "Ano": st.column_config.NumberColumn("Ano", disabled=True),
+                "Mês": st.column_config.TextColumn("Mês", disabled=True),
+            },
+            key="grade_icms_futuro",
+        )
+        if st.button("Calcular ICMS futuro", key="btn_calc_icms_futuro"):
+            df_calc = edit.fillna(0.0)
+            serie_creditos = (
+                df_calc["Entrada_4"] * 0.04
+                + df_calc["Entrada_7"] * 0.07
+                + df_calc["Entrada_12"] * 0.12
+                + df_calc["Entrada_19"] * 0.19
+            ).tolist()
+            serie_debitos = (
+                df_calc["Saída_12"] * 0.12
+                + df_calc["Saída_11"] * 0.11
+                + df_calc["Saída_11"] * 0.01
+                + df_calc["Saída_19"] * 0.19
+            ).tolist()
+            credito_inicial = _credito_acumulado_atual(df, ano_vig, mes_vig, MESES_PT, "ICMS")
+            roll = _rollforward(credito_inicial, serie_creditos, serie_debitos)
+            df_res = pd.concat(
+                [
+                    df_calc[["Período(YYYY-MM)", "Ano", "Mês"]].reset_index(drop=True),
+                    pd.DataFrame(roll),
+                ],
+                axis=1,
+            )
+            st.dataframe(df_res)
+            total_pagar = df_res["A Pagar"].sum()
+            fig = px.bar(
+                df_res,
+                x="Período(YYYY-MM)",
+                y="A Pagar",
+                text="A Pagar",
+                template="plotly_dark",
+            )
+            fig.update_traces(texttemplate="R$ %{y:,.2f}", textposition="outside")
+            fig.update_layout(yaxis_title="", xaxis_title="", margin=dict(t=30, b=30))
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("Total previsto a pagar", format_brl(total_pagar))
             
 def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
     st.header("Simulação Manual de PIS/COFINS")
@@ -655,7 +815,7 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
         if meses_sel:
             meses_param = meses_sel
         else:
-            meses_param = [MESES_PT[m] for m in range(1, 13)]
+            meses_param = list(range(1, 13))
         todos_meses = calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_param)
         if todos_meses:
             credito_acumulado = todos_meses[-1].get('Crédito PIS/COFINS Transportado', 0.0)
@@ -842,31 +1002,85 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
                 </div>
             """, unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
-        with col_res2:
-            st.markdown(
-                """
-                <div style="
-                    background: #1a2433;
-                    border-radius: 12px;
-                    padding: 20px;
-                    border: 1px solid #2c3e50;
-                ">
-                    <h4 style="color: white; margin: 0 0 16px 0; font-weight: bold;">
-                        Débitos de PIS/COFINS
-                    </h4>
-                """,
-                unsafe_allow_html=True
-            )
-            st.markdown(f"""
-                <div style="font-family: 'Segoe UI', sans-serif; line-height: 1.6;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <span style="color: white; font-weight: bold;">Total Saídas:</span>
-                        <span style="color: white; font-weight: bold;">{moeda_format(st.session_state.saida_pis_text)}</span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <span style="color: white; font-weight: bold;">Débito PIS/COFINS (9,25%):</span>
-                        <span style="color: white; font-weight: bold;">{format_brl(debito_saidas)}</span>
-                    </div>
+
+    with col_res2:
+        st.markdown(
+            """
+            <div style="
+                background: #1a2433;
+                border-radius: 12px;
+                padding: 20px;
+                border: 1px solid #2c3e50;
+            ">
+                <h4 style="color: white; margin: 0 0 16px 0; font-weight: bold;">
+                    Débitos de PIS/COFINS
+                </h4>
+            """,
+            unsafe_allow_html=True
+        )
+        st.markdown(f"""
+            <div style="font-family: 'Segoe UI', sans-serif; line-height: 1.6;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="color: white; font-weight: bold;">Total Saídas:</span>
+                    <span style="color: white; font-weight: bold;">{moeda_format(st.session_state.saida_pis_text)}</span>
                 </div>
-            """, unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+                <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                    <span style="color: white; font-weight: bold;">Débito PIS/COFINS (9,25%):</span>
+                    <span style="color: white; font-weight: bold;">{format_brl(debito_saidas)}</span>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    with st.expander("Simulação meses futuros (manual)"):
+        df_ent = df[df["Tipo"].eq("Entrada")] if df is not None else None
+        df_sai = df[df["Tipo"].eq("Saída")] if df is not None else None
+        ano_vig, mes_vig = _ultimo_mes_vigente(df_ent, df_sai)
+        horizonte = st.number_input(
+            "Horizonte (meses)",
+            min_value=1,
+            max_value=24,
+            value=6,
+            step=1,
+            key="pis_horizonte",
+        )
+        grade = _grade_futura(ano_vig, mes_vig, int(horizonte), MESES_PT)
+        for c in ["Base_Entradas", "Base_Saídas"]:
+            grade[c] = None
+        edit = st.data_editor(
+            grade,
+            num_rows="fixed",
+            column_config={
+                "Período(YYYY-MM)": st.column_config.TextColumn("Período", disabled=True),
+                "Ano": st.column_config.NumberColumn("Ano", disabled=True),
+                "Mês": st.column_config.TextColumn("Mês", disabled=True),
+            },
+            key="grade_pis_futuro",
+        )
+        if st.button("Calcular PIS/COFINS futuro", key="btn_calc_pis_futuro"):
+            df_calc = edit.fillna(0.0)
+            serie_creditos = (df_calc["Base_Entradas"] * 0.0925).tolist()
+            serie_debitos = (df_calc["Base_Saídas"] * 0.0925).tolist()
+            credito_inicial = _credito_acumulado_atual(df, ano_vig, mes_vig, MESES_PT, "PIS/COFINS")
+            roll = _rollforward(credito_inicial, serie_creditos, serie_debitos)
+            df_res = pd.concat(
+                [
+                    df_calc[["Período(YYYY-MM)", "Ano", "Mês"]].reset_index(drop=True),
+                    pd.DataFrame(roll),
+                ],
+                axis=1,
+            )
+            st.dataframe(df_res)
+            total_pagar = df_res["A Pagar"].sum()
+            fig = px.bar(
+                df_res,
+                x="Período(YYYY-MM)",
+                y="A Pagar",
+                text="A Pagar",
+                template="plotly_dark",
+            )
+            fig.update_traces(texttemplate="R$ %{y:,.2f}", textposition="outside")
+            fig.update_layout(yaxis_title="", xaxis_title="", margin=dict(t=30, b=30))
+            st.plotly_chart(fig, use_container_width=True)
+            st.metric("Total previsto a pagar", format_brl(total_pagar))
