@@ -162,7 +162,9 @@ with st.sidebar:
         default=["Todos os meses"],
     )
     if "Todos os meses" in meses_sel or not meses_sel:
-        meses_sel = [MESES_PT[m] for m in range(1, 13)]
+        meses_sel = list(range(1, 13))
+    else:
+        meses_sel = sorted({MES_PARA_NUM[m] for m in meses_sel})
 
     st.markdown("---")
     st.markdown(
@@ -223,12 +225,7 @@ with st.sidebar:
             key="rel_dash"
         )
 
-if tipo_relatorio == "📁 Fiscal":
-    st.title("Fiscal")
-elif tipo_relatorio == "📊 Contábil":
-    st.title("Contábil")
-elif tipo_relatorio == "📈 Dashboards":
-    st.title("Dashboards")
+st.title("Apuração Fiscal")
 
 # --------- APURAÇÃO DO PERÍODO VIGENTE -----------
 if tipo_relatorio == "📁 Fiscal" and relatorio_escolhido == "Apuração de Tributos Fiscais":
@@ -271,9 +268,7 @@ if tipo_relatorio == "📁 Fiscal" and relatorio_escolhido == "Apuração de Tri
                 f"<div class='card-destaque-green'>Crédito PIS/COFINS a Transportar<br><span style='font-size:1.15em;'>{format_brl(pis_credito)}</span></div>",
                 unsafe_allow_html=True
             )
-
-
-st.markdown("---")
+    st.markdown("---")
 st.subheader("Relatórios disponíveis")
 
 # RESTANTE: idêntico ao anterior...
@@ -282,15 +277,14 @@ if tipo_relatorio == "📁 Fiscal":
         resumo_mensal = resumo_mensal_full  # já carregado acima para evitar cálculo duplo
         if resumo_mensal:
             for linha in resumo_mensal:
-                with st.expander(f"{linha['Mês']} {linha['Ano']}", expanded=(linha['Mês'] == MESES_PT[datas.dt.month.min()])):
-                    col_a, col_b, col_c = st.columns(3)
-                    col_a.markdown(f"<div class='card blue'>TOTAL ENTRADAS<br><b>{format_brl(linha['Entradas (Revenda + Frete)'])}</b></div>", unsafe_allow_html=True)
-                    col_b.markdown(f"<div class='card blue'>TOTAL SAÍDAS<br><b>{format_brl(linha['Saídas'])}</b></div>", unsafe_allow_html=True)
-                    resultado = linha['Resultado Líquido']
-                    cor_resultado = "green" if resultado >= 0 else "red"
-                    col_c.markdown(f"<div class='card {cor_resultado}'>RESULTADO<br><b>{format_brl(resultado)}</b></div>", unsafe_allow_html=True)
-
-                    st.markdown("<div class='titulo-apuracao'>APURAÇÃO ICMS</div>", unsafe_allow_html=True)
+                with st.expander(
+                    f"{linha['Mês']} {linha['Ano']}",
+                    expanded=(linha['Mês'] == MESES_PT[datas.dt.month.min()]),
+                ):
+                    st.markdown(
+                        "<div class='titulo-apuracao'>APURAÇÃO ICMS</div>",
+                        unsafe_allow_html=True,
+                    )
                     c1, c2, c3, c4 = st.columns(4)
                     c1.markdown(f"<div class='card'>ICMS ENTRADA<br><b>{format_brl(linha['ICMS Entradas'])}</b></div>", unsafe_allow_html=True)
                     c2.markdown(f"<div class='card'>ICMS SAÍDA<br><b>{format_brl(linha['ICMS Saídas'])}</b></div>", unsafe_allow_html=True)
