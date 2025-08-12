@@ -11,7 +11,7 @@ from app.meses import MESES_PT, MES_PARA_NUM
 from app.relatorio_fiscal import calcular_resumo_fiscal_mes_a_mes, gerar_excel_resumo
 from app.relatorio_fiscal import simulador_icms_manual, simulador_pis_cofins_manual  # <-- Adicione aqui
 from app.relatorio_contabil import mostrar_resumo_contabil
-from app.relatorio_graficos import mostrar_dashboard
+from app.relatorio_graficos import mostrar_dashboard, mostrar_entradas_saidas
 
 DATA_PATH = Path(r"U:\Automações PYTHON\Acompanhamento de empresas\data\notas_fiscais.xlsx")
 LOGO_PATH = Path(r"U:\Automações PYTHON\Acompanhamento de empresas\assets\logo.png")
@@ -266,6 +266,16 @@ if tipo_relatorio == "📁 Fiscal" and relatorio_escolhido == "Apuração de Tri
                 f"<div class='card-destaque-green'>Crédito PIS/COFINS a Transportar<br><span style='font-size:1.15em;'>{format_brl(pis_credito)}</span></div>",
                 unsafe_allow_html=True
             )
+        entradas_fiscal = df[df['Tipo'].eq('Entrada')]
+        saidas_fiscal = df[df['Tipo'].eq('Saída')]
+        mostrar_entradas_saidas(
+            entradas_fiscal,
+            saidas_fiscal,
+            [ano_sel],
+            meses_sel,
+            somente_tributaveis=True,
+        )
+
 
 st.markdown("---")
 st.subheader("Relatórios disponíveis")
