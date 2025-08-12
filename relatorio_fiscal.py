@@ -4,6 +4,7 @@ import logging
 import re
 from pathlib import Path
 from io import BytesIO
+import plotly.express as px
 
 from .meses import MESES_PT, MES_PARA_NUM
 
@@ -639,8 +640,113 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
                     </div>
                 </div>
             """, unsafe_allow_html=True)
-            
+
             st.markdown("</div>", unsafe_allow_html=True)
+
+    # 4. Simulação meses futuros (manual)
+    with st.expander("Simulação meses futuros (manual)"):
+        # Determinar mês vigente
+        hoje = pd.Timestamp.today()
+        if df is not None and not df.empty:
+            datas = pd.to_datetime(df.get("Data Emissão"), format="%d/%m/%Y", errors="coerce")
+            max_data = datas.max()
+            if pd.notna(max_data):
+                hoje = max_data
+        vigente_ano = int(hoje.year)
+        vigente_mes = int(hoje.month)
+
+        # Crédito acumulado inicial
+        credito_inicial = 0.0
+        if df is not None and vigente_mes > 1:
+            meses_prev = list(range(1, vigente_mes))
+            resumo_prev = calcular_resumo_fiscal_mes_a_mes(df, vigente_ano, meses_prev)
+            if resumo_prev:
+                credito_inicial = resumo_prev[-1].get("Crédito ICMS Transportado", 0.0) or 0.0
+
+        st.markdown(f"Mês vigente: **{MESES_PT[vigente_mes]} / {vigente_ano}**")
+        st.markdown(f"Crédito acumulado inicial: **{format_brl(credito_inicial)}**")
+
+        # Horizonte de projeção
+        num_meses = st.number_input(
+            "Quantidade de meses a projetar", min_value=1, max_value=24, value=6, key="icms_horizonte"
+        )
+
+        periodos = pd.period_range(
+            pd.Timestamp(vigente_ano, vigente_mes, 1), periods=num_meses, freq="M"
+        )
+        dados_base = pd.DataFrame({"Período": periodos.strftime("%Y-%m")})
+        for col in [
+            "Entrada_4",
+            "Entrada_7",
+            "Entrada_12",
+            "Entrada_19",
+            "Saída_11",
+            "Saída_12",
+            "Saída_19",
+        ]:
+            dados_base[col] = pd.NA
+
+        entradas_usuario = st.data_editor(
+            dados_base, use_container_width=True, key="icms_editor", disabled=("Período",)
+        )
+
+        if not entradas_usuario.empty:
+            entradas_usuario = entradas_usuario.fillna(0)
+            resultados = []
+            credito_atual = credito_inicial
+            for _, linha in entradas_usuario.iterrows():
+                periodo = linha["Período"]
+                ano = int(periodo.split("-")[0])
+                mes = int(periodo.split("-")[1])
+
+                e4 = float(linha.get("Entrada_4", 0))
+                e7 = float(linha.get("Entrada_7", 0))
+                e12 = float(linha.get("Entrada_12", 0))
+                e19 = float(linha.get("Entrada_19", 0))
+                s11 = float(linha.get("Saída_11", 0))
+                s12 = float(linha.get("Saída_12", 0))
+                s19 = float(linha.get("Saída_19", 0))
+
+                credito_mes = e4 * 0.04 + e7 * 0.07 + e12 * 0.12 + e19 * 0.19
+                debito_mes = s12 * 0.12 + s11 * 0.11 + s11 * 0.01 + s19 * 0.19
+
+                consumo = min(debito_mes, credito_mes + credito_atual)
+                a_pagar = debito_mes - consumo
+                credito_final = max(credito_mes + credito_atual - consumo, 0.0)
+
+                resultados.append(
+                    {
+                        "Período": periodo,
+                        "Ano": ano,
+                        "Mês": MESES_PT[mes],
+                        "Crédito Inicial": credito_atual,
+                        "Crédito do Mês": credito_mes,
+                        "Débito do Mês": debito_mes,
+                        "A Pagar": a_pagar,
+                        "Crédito Final": credito_final,
+                    }
+                )
+
+                credito_atual = credito_final
+
+            df_res = pd.DataFrame(resultados)
+            df_display = df_res.copy()
+            for col in [
+                "Crédito Inicial",
+                "Crédito do Mês",
+                "Débito do Mês",
+                "A Pagar",
+                "Crédito Final",
+            ]:
+                df_display[col] = df_display[col].apply(format_brl)
+
+            st.data_editor(df_display, use_container_width=True, key="icms_resultados", disabled=True)
+
+            total_pagar = df_res["A Pagar"].sum()
+            st.metric("Total previsto a pagar (horizonte)", format_brl(total_pagar))
+
+            fig = px.bar(df_res, x="Período", y="A Pagar", title="A Pagar por período", template="plotly_dark")
+            st.plotly_chart(fig, use_container_width=True)
             
 def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
     st.header("Simulação Manual de PIS/COFINS")
@@ -874,3 +980,90 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
                 </div>
             """, unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
+
+    # Simulação meses futuros (manual)
+    with st.expander("Simulação meses futuros (manual)"):
+        hoje = pd.Timestamp.today()
+        if df is not None and not df.empty:
+            datas = pd.to_datetime(df.get("Data Emissão"), format="%d/%m/%Y", errors="coerce")
+            max_data = datas.max()
+            if pd.notna(max_data):
+                hoje = max_data
+        vigente_ano = int(hoje.year)
+        vigente_mes = int(hoje.month)
+
+        credito_inicial = 0.0
+        if df is not None and vigente_mes > 1:
+            meses_prev = list(range(1, vigente_mes))
+            resumo_prev = calcular_resumo_fiscal_mes_a_mes(df, vigente_ano, meses_prev)
+            if resumo_prev:
+                credito_inicial = resumo_prev[-1].get("Crédito PIS/COFINS Transportado", 0.0) or 0.0
+
+        st.markdown(f"Mês vigente: **{MESES_PT[vigente_mes]} / {vigente_ano}**")
+        st.markdown(f"Crédito acumulado inicial: **{format_brl(credito_inicial)}**")
+
+        num_meses = st.number_input(
+            "Quantidade de meses a projetar", min_value=1, max_value=24, value=6, key="pc_horizonte"
+        )
+        periodos = pd.period_range(
+            pd.Timestamp(vigente_ano, vigente_mes, 1), periods=num_meses, freq="M"
+        )
+        dados_base = pd.DataFrame({"Período": periodos.strftime("%Y-%m")})
+        for col in ["Base_Entradas", "Base_Saídas"]:
+            dados_base[col] = pd.NA
+
+        entradas_usuario = st.data_editor(
+            dados_base, use_container_width=True, key="pc_editor", disabled=("Período",)
+        )
+
+        if not entradas_usuario.empty:
+            entradas_usuario = entradas_usuario.fillna(0)
+            resultados = []
+            credito_atual = credito_inicial
+            for _, linha in entradas_usuario.iterrows():
+                periodo = linha["Período"]
+                ano = int(periodo.split("-")[0])
+                mes = int(periodo.split("-")[1])
+
+                base_ent = float(linha.get("Base_Entradas", 0))
+                base_sai = float(linha.get("Base_Saídas", 0))
+
+                credito_mes = base_ent * 0.0925
+                debito_mes = base_sai * 0.0925
+
+                consumo = min(debito_mes, credito_mes + credito_atual)
+                a_pagar = debito_mes - consumo
+                credito_final = max(credito_mes + credito_atual - consumo, 0.0)
+
+                resultados.append(
+                    {
+                        "Período": periodo,
+                        "Ano": ano,
+                        "Mês": MESES_PT[mes],
+                        "Crédito Inicial": credito_atual,
+                        "Crédito do Mês": credito_mes,
+                        "Débito do Mês": debito_mes,
+                        "A Pagar": a_pagar,
+                        "Crédito Final": credito_final,
+                    }
+                )
+                credito_atual = credito_final
+
+            df_res = pd.DataFrame(resultados)
+            df_display = df_res.copy()
+            for col in [
+                "Crédito Inicial",
+                "Crédito do Mês",
+                "Débito do Mês",
+                "A Pagar",
+                "Crédito Final",
+            ]:
+                df_display[col] = df_display[col].apply(format_brl)
+
+            st.data_editor(df_display, use_container_width=True, key="pc_resultados", disabled=True)
+
+            total_pagar = df_res["A Pagar"].sum()
+            st.metric("Total previsto a pagar (horizonte)", format_brl(total_pagar))
+
+            fig = px.bar(df_res, x="Período", y="A Pagar", title="A Pagar por período", template="plotly_dark")
+            st.plotly_chart(fig, use_container_width=True)
