@@ -263,7 +263,6 @@ def mostrar_resumo_fiscal(df, ano_sel=None, meses_sel=None):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-
 def _ultimo_mes_vigente(df):
     datas = pd.to_datetime(df.get("Data Emissão", pd.Series([])), format="%d/%m/%Y", errors="coerce") if df is not None else pd.Series([], dtype="datetime64[ns]")
     max_data = datas.max()
@@ -385,4 +384,3 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
                 unsafe_allow_html=True,
             )
         st.metric("Total previsto a pagar (restante do ano)", format_brl(total_pagar))
-
