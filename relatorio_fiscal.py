@@ -103,7 +103,7 @@ def calcular_resumo_fiscal_mes_a_mes(df, ano_sel, meses_sel, considerar_acumulo_
                 meses_num = [MES_PARA_NUM.get(m, None) for m in meses_sel if m in MES_PARA_NUM]
             meses_num = [m for m in meses_num if m]
         else:
-            meses_num = sorted(df["Data Emissão"].dt.month.dropna().unique())
+            meses_num = list(range(1, 13))
 
         credito_icms_acumulado = 0.0
         credito_pis_cofins_acumulado = 0.0

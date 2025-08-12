@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from app.meses import MESES_PT, MES_PARA_NUM
-from app.relatorio_fiscal import calcular_resumo_fiscal_mes_a_mes
+from app.relatorio_fiscal import calcular_resumo_fiscal_mes_a_mes, parse_col
 
 def brl_format(val: float) -> str:
     """Formata número para R$ 1.234.567,89"""
@@ -263,7 +263,6 @@ def mostrar_entradas_saidas(
         '<h2 class="section-title">Entradas x Saídas por Período</h2>',
         unsafe_allow_html=True,
     )
-    if mostrar_por_mes:
         df_plot = df_mes.melt(
             id_vars=["Mês"],
             value_vars=["Entradas", "Saídas"],
@@ -404,9 +403,6 @@ def mostrar_dashboard(df_entradas: pd.DataFrame,
     </style>
     """, unsafe_allow_html=True)
 
-    # Título principal
-    st.markdown('<h1 class="main-title">Apuração Fiscal</h1>', unsafe_allow_html=True)
-
     # 1) Período
     ano_sel = anos[0] if isinstance(anos, (list, tuple)) else anos
     meses_num = sorted(set(meses)) if meses else list(range(1, 13))
@@ -420,8 +416,12 @@ def mostrar_dashboard(df_entradas: pd.DataFrame,
             (df["Data Emissão"].dt.month.isin(meses_num))
         ]
 
-    df_ent = filtrar(df_entradas)
-    df_sai = filtrar(df_saidas)
+    df_ent_raw = filtrar(df_entradas)
+    df_sai_raw = filtrar(df_saidas)
+    df_ent = df_ent_raw.copy()
+    df_sai = df_sai_raw.copy()
+    df_ent["Valor Líquido"] = parse_col(df_ent.get("Valor Líquido", pd.Series(dtype=str)), "Valor Líquido Entradas")
+    df_sai["Valor Líquido"] = parse_col(df_sai.get("Valor Líquido", pd.Series(dtype=str)), "Valor Líquido Saídas")
 
     # 3) KPI Cards customizados
     total_ent = df_ent["Valor Líquido"].sum()
