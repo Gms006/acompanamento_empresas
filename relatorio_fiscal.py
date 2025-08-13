@@ -263,6 +263,7 @@ def mostrar_resumo_fiscal(df, ano_sel=None, meses_sel=None):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+
 def _ultimo_mes_vigente(df):
     datas = pd.to_datetime(df.get("Data Emissão", pd.Series([])), format="%d/%m/%Y", errors="coerce") if df is not None else pd.Series([], dtype="datetime64[ns]")
     max_data = datas.max()
@@ -333,24 +334,89 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
                 s12 = st.number_input("Saída 12%", min_value=0.0, key=f"icms_{ano}_{mes}_s12")
                 s19 = st.number_input("Saída 19%", min_value=0.0, key=f"icms_{ano}_{mes}_s19")
             valores[(ano, mes)] = (e4, e7, e12, e19, s11, s12, s19)
+            if "icms_resultados" in st.session_state:
+                det = st.session_state["icms_resultados"].get((ano, mes))
+                if det:
+                    st.markdown("**Detalhamento ICMS do mês**")
+                    col_c, col_d = st.columns(2)
+                    with col_c:
+                        st.markdown("*Entradas (Créditos)*")
+                        st.markdown(f"Crédito 4% = {format_brl(det['cred_4'])}")
+                        st.markdown(f"Crédito 7% = {format_brl(det['cred_7'])}")
+                        st.markdown(f"Crédito 12% = {format_brl(det['cred_12'])}")
+                        st.markdown(f"Crédito 19% = {format_brl(det['cred_19'])}")
+                        st.markdown(f"**Total Créditos do mês: {format_brl(det['total_credito'])}**")
+                    with col_d:
+                        st.markdown("*Saídas (Débitos)*")
+                        st.markdown(f"Débito 11% = {format_brl(det['deb_11'])}")
+                        st.markdown(f"PROTEGE 1% = {format_brl(det['protege'])}")
+                        st.markdown(f"Débito 12% = {format_brl(det['deb_12'])}")
+                        st.markdown(f"Débito 19% = {format_brl(det['deb_19'])}")
+                        st.markdown(f"**Total Débitos do mês: {format_brl(det['total_debito'])}**")
+                    st.markdown("**Apuração do mês**")
+                    st.markdown(f"Crédito Inicial: {format_brl(det['credito_inicial'])}")
+                    st.markdown(f"Consumo de crédito: {format_brl(det['consumo'])}")
+                    st.markdown(f"A Pagar: {format_brl(det['a_pagar'])}")
+                    st.markdown(f"Crédito Final: {format_brl(det['credito_final'])}")
+
     if st.button("Simular projeção", key="btn_icms_proj"):
-        creditos, debitos, periodos = [], [], []
-        for (ano, mes), (e4, e7, e12, e19, s11, s12, s19) in valores.items():
-            creditos.append(e4 * 0.04 + e7 * 0.07 + e12 * 0.12 + e19 * 0.19)
-            debitos.append(s12 * 0.12 + s11 * 0.11 + s11 * 0.01 + s19 * 0.19)
-            periodos.append((ano, mes))
-        resultados = _rollforward(credito_inicial, creditos, debitos, periodos)
-        total_pagar = sum(r["A Pagar"] for r in resultados)
-        for r in resultados:
-            st.markdown(
-                f"<div style='background:#1a2433;border-radius:8px;padding:10px;margin-bottom:6px;'>"
-                f"<b>{r['Período']}</b> | Crédito Inicial {format_brl(r['Crédito Inicial'])} | "
-                f"Crédito do Mês {format_brl(r['Crédito do Mês'])} | Débito do Mês {format_brl(r['Débito do Mês'])} | "
-                f"A Pagar {format_brl(r['A Pagar'])} | Crédito Final {format_brl(r['Crédito Final'])}"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        st.metric("Total previsto a pagar (restante do ano)", format_brl(total_pagar))
+        detalhes = {}
+        credito_atual = credito_inicial
+        total_pagar = 0.0
+        for (ano, mes) in meses:
+            e4, e7, e12, e19, s11, s12, s19 = valores.get((ano, mes), (0, 0, 0, 0, 0, 0, 0))
+            c4 = e4 * 0.04
+            c7 = e7 * 0.07
+            c12 = e12 * 0.12
+            c19 = e19 * 0.19
+            total_cred = c4 + c7 + c12 + c19
+            d11 = s11 * 0.11
+            protege = s11 * 0.01
+            d12 = s12 * 0.12
+            d19 = s19 * 0.19
+            total_deb = d11 + protege + d12 + d19
+            consumo = min(total_deb, total_cred + credito_atual)
+            a_pagar = total_deb - consumo
+            credito_final = max(total_cred + credito_atual - consumo, 0.0)
+            detalhes[(ano, mes)] = {
+                "cred_4": c4,
+                "cred_7": c7,
+                "cred_12": c12,
+                "cred_19": c19,
+                "total_credito": total_cred,
+                "deb_11": d11,
+                "protege": protege,
+                "deb_12": d12,
+                "deb_19": d19,
+                "total_debito": total_deb,
+                "credito_inicial": credito_atual,
+                "consumo": consumo,
+                "a_pagar": a_pagar,
+                "credito_final": credito_final,
+            }
+            credito_atual = credito_final
+            total_pagar += a_pagar
+        st.session_state["icms_resultados"] = detalhes
+        st.session_state["icms_total_pagar"] = total_pagar
+        st.experimental_rerun()
+
+    if "icms_resultados" in st.session_state:
+        detalhes = st.session_state["icms_resultados"]
+        for ano, mes in meses:
+            det = detalhes.get((ano, mes))
+            if det:
+                st.markdown(
+                    f"<div style='background:#1a2433;border-radius:8px;padding:10px;margin-bottom:6px;'>"
+                    f"<b>{ano}-{mes:02d}</b> | Crédito Inicial {format_brl(det['credito_inicial'])} | "
+                    f"Crédito do Mês {format_brl(det['total_credito'])} | Débito do Mês {format_brl(det['total_debito'])} | "
+                    f"A Pagar {format_brl(det['a_pagar'])} | Crédito Final {format_brl(det['credito_final'])}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+        st.metric(
+            "Total previsto a pagar (restante do ano)",
+            format_brl(st.session_state.get("icms_total_pagar", 0.0)),
+        )
 
 
 def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
@@ -384,3 +450,4 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
                 unsafe_allow_html=True,
             )
         st.metric("Total previsto a pagar (restante do ano)", format_brl(total_pagar))
+
