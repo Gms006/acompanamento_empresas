@@ -7,6 +7,14 @@ from io import BytesIO
 
 from .meses import MESES_PT, MES_PARA_NUM
 
+# Helper opcional de compatibilidade para rerun
+def _safe_rerun():
+    """Força rerun compatível com versões antigas/novas do Streamlit."""
+    if hasattr(st, "rerun"):
+        st.rerun()
+    elif hasattr(st, "experimental_rerun"):
+        st.experimental_rerun()
+
 # Configuração de log detalhado
 LOG_PATH = Path(__file__).resolve().parent / "reports" / "relatorio_fiscal_debug.log"
 LOG_PATH.parent.mkdir(exist_ok=True)
@@ -516,7 +524,8 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
         st.session_state["icms_resultados"] = detalhes
         st.session_state["icms_df"] = df_res
         st.session_state["icms_kpis"] = derive_kpis(df_res)
-        st.experimental_rerun()
+        # Força um rerun para refletir imediatamente as mudanças de estado
+        _safe_rerun()
 
     if "icms_df" in st.session_state:
         df_res = st.session_state["icms_df"]
@@ -549,7 +558,8 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
         df_res = pd.DataFrame(resultados)
         st.session_state["pc_df"] = df_res
         st.session_state["pc_kpis"] = derive_kpis(df_res)
-        st.experimental_rerun()
+        # Força um rerun para refletir imediatamente as mudanças de estado
+        _safe_rerun()
 
     if "pc_df" in st.session_state:
         df_res = st.session_state["pc_df"]
@@ -557,3 +567,4 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
         render_kpi_bar(kpis)
         render_smart_notices(kpis)
         render_month_list(df_res)
+
