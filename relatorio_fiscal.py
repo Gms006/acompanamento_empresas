@@ -263,6 +263,7 @@ def mostrar_resumo_fiscal(df, ano_sel=None, meses_sel=None):
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
+
 def _ultimo_mes_vigente(df):
     datas = pd.to_datetime(df.get("Data Emissão", pd.Series([])), format="%d/%m/%Y", errors="coerce") if df is not None else pd.Series([], dtype="datetime64[ns]")
     max_data = datas.max()
@@ -312,6 +313,135 @@ def _rollforward(credito_inicial, creditos, debitos, periodos):
     return resultados
 
 
+def chip(texto: str, color: str) -> str:
+    classes = {
+        "green": "badge badge-green",
+        "red": "badge badge-red",
+    }
+    return f"<span class='{classes.get(color, 'badge')}'>{texto}</span>"
+
+
+def derive_kpis(df: pd.DataFrame) -> dict:
+    if df is None or df.empty:
+        return {
+            "total_a_pagar": 0.0,
+            "meses_com_pagamento": 0,
+            "primeiro_mes_pagamento": "-",
+            "valor_primeiro_mes": 0.0,
+            "credito_final_dezembro": 0.0,
+            "mes_maior_pagamento": "-",
+            "valor_maior_pagamento": 0.0,
+        }
+
+    total_a_pagar = float(df["A Pagar"].sum())
+    meses_pag = df[df["A Pagar"] > 0]
+    meses_com_pagamento = int((df["A Pagar"] > 0).sum())
+    if not meses_pag.empty:
+        primeiro = meses_pag.iloc[0]
+        primeiro_mes = f"{primeiro['Mês']}/{primeiro['Ano']}"
+        valor_primeiro = float(primeiro["A Pagar"])
+    else:
+        primeiro_mes = "-"
+        valor_primeiro = 0.0
+    ultimo = df.iloc[-1]
+    credito_final_dez = float(ultimo["Crédito Final"])
+    idxmax = df["A Pagar"].idxmax()
+    mes_maior = f"{df.loc[idxmax, 'Mês']}/{df.loc[idxmax, 'Ano']}"
+    valor_maior = float(df.loc[idxmax, "A Pagar"])
+    return {
+        "total_a_pagar": total_a_pagar,
+        "meses_com_pagamento": meses_com_pagamento,
+        "primeiro_mes_pagamento": primeiro_mes,
+        "valor_primeiro_mes": valor_primeiro,
+        "credito_final_dezembro": credito_final_dez,
+        "mes_maior_pagamento": mes_maior,
+        "valor_maior_pagamento": valor_maior,
+    }
+
+
+def inject_css():
+    st.markdown(
+        """
+        <style>
+        .kpi-sticky { position: sticky; top: 0; z-index: 999; background: var(--background-color, #0e1117); padding: .5rem 0; }
+        .badge { display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; }
+        .badge-green { background:#133a20; color:#6ee7b7; border:1px solid #065f46; }
+        .badge-red { background:#3a1616; color:#fca5a5; border:1px solid #7f1d1d; }
+        .month-row { background:#1a2433; border-radius:8px; padding:10px; margin-bottom:6px; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_kpi_bar(kpis: dict):
+    inject_css()
+    st.markdown("<div class='kpi-sticky'>", unsafe_allow_html=True)
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Total a pagar (restante do ano)", format_brl(kpis["total_a_pagar"]))
+    col2.metric("1º mês com pagamento", kpis["primeiro_mes_pagamento"])
+    col3.metric("Meses com pagamento", kpis["meses_com_pagamento"])
+    col4.metric("Crédito final (dez)", format_brl(kpis["credito_final_dezembro"]))
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_smart_notices(kpis: dict):
+    if kpis["meses_com_pagamento"] == 0:
+        st.success("Crédito cobre todo o restante do ano.")
+    else:
+        st.info(
+            f"Próximo desembolso em {kpis['primeiro_mes_pagamento']} no valor de {format_brl(kpis['valor_primeiro_mes'])}"
+        )
+        if kpis["valor_maior_pagamento"] > 100_000:
+            st.warning(
+                f"Desembolso elevado em {kpis['mes_maior_pagamento']} de {format_brl(kpis['valor_maior_pagamento'])}"
+            )
+
+
+def render_month_list(df: pd.DataFrame, detalhes: dict | None = None):
+    for _, row in df.iterrows():
+        status = "Sem pagamento" if row["A Pagar"] <= 0 else "A pagar"
+        color = "green" if row["A Pagar"] <= 0 else "red"
+        badge = chip(status, color)
+        st.markdown(
+            f"<div class='month-row'><b>{row['Período']}</b> {badge}<br>"
+            f"Crédito Inicial {format_brl(row['Crédito Inicial'])} | Crédito do Mês {format_brl(row['Crédito do Mês'])} | "
+            f"Débito do Mês {format_brl(row['Débito do Mês'])} | A Pagar {format_brl(row['A Pagar'])} | "
+            f"Crédito Final {format_brl(row['Crédito Final'])}</div>",
+            unsafe_allow_html=True,
+        )
+        if detalhes:
+            chave = (row["Ano"], MES_PARA_NUM.get(row["Mês"], 0))
+            det = detalhes.get(chave)
+            if det:
+                with st.expander("Detalhar"):
+                    if {"cred_4"}.issubset(det.keys()):
+                        col_c, col_d = st.columns(2)
+                        with col_c:
+                            st.markdown("*Entradas (Créditos)*")
+                            st.markdown(f"Crédito 4% = {format_brl(det['cred_4'])}")
+                            st.markdown(f"Crédito 7% = {format_brl(det['cred_7'])}")
+                            st.markdown(f"Crédito 12% = {format_brl(det['cred_12'])}")
+                            st.markdown(f"Crédito 19% = {format_brl(det['cred_19'])}")
+                            st.markdown(f"**Total Créditos do mês: {format_brl(det['total_credito'])}**")
+                        with col_d:
+                            st.markdown("*Saídas (Débitos)*")
+                            st.markdown(f"Débito 11% = {format_brl(det['deb_11'])}")
+                            st.markdown(f"PROTEGE 1% = {format_brl(det['protege'])}")
+                            st.markdown(f"Débito 12% = {format_brl(det['deb_12'])}")
+                            st.markdown(f"Débito 19% = {format_brl(det['deb_19'])}")
+                            st.markdown(f"**Total Débitos do mês: {format_brl(det['total_debito'])}**")
+                        st.markdown("**Apuração do mês**")
+                        st.markdown(f"Crédito Inicial: {format_brl(det['credito_inicial'])}")
+                        st.markdown(f"Consumo de crédito: {format_brl(det['consumo'])}")
+                        st.markdown(f"A Pagar: {format_brl(det['a_pagar'])}")
+                        st.markdown(f"Crédito Final: {format_brl(det['credito_final'])}")
+                    else:
+                        st.markdown(f"Crédito do Mês: {format_brl(row['Crédito do Mês'])}")
+                        st.markdown(f"Débito do Mês: {format_brl(row['Débito do Mês'])}")
+
+
+
 def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
     st.header("Simulação Manual de ICMS")
     ano_vig, mes_vig = _ultimo_mes_vigente(df if df is not None else pd.DataFrame())
@@ -333,24 +463,67 @@ def simulador_icms_manual(df=None, ano_sel=None, meses_sel=None):
                 s12 = st.number_input("Saída 12%", min_value=0.0, key=f"icms_{ano}_{mes}_s12")
                 s19 = st.number_input("Saída 19%", min_value=0.0, key=f"icms_{ano}_{mes}_s19")
             valores[(ano, mes)] = (e4, e7, e12, e19, s11, s12, s19)
+
     if st.button("Simular projeção", key="btn_icms_proj"):
-        creditos, debitos, periodos = [], [], []
-        for (ano, mes), (e4, e7, e12, e19, s11, s12, s19) in valores.items():
-            creditos.append(e4 * 0.04 + e7 * 0.07 + e12 * 0.12 + e19 * 0.19)
-            debitos.append(s12 * 0.12 + s11 * 0.11 + s11 * 0.01 + s19 * 0.19)
-            periodos.append((ano, mes))
-        resultados = _rollforward(credito_inicial, creditos, debitos, periodos)
-        total_pagar = sum(r["A Pagar"] for r in resultados)
-        for r in resultados:
-            st.markdown(
-                f"<div style='background:#1a2433;border-radius:8px;padding:10px;margin-bottom:6px;'>"
-                f"<b>{r['Período']}</b> | Crédito Inicial {format_brl(r['Crédito Inicial'])} | "
-                f"Crédito do Mês {format_brl(r['Crédito do Mês'])} | Débito do Mês {format_brl(r['Débito do Mês'])} | "
-                f"A Pagar {format_brl(r['A Pagar'])} | Crédito Final {format_brl(r['Crédito Final'])}"
-                f"</div>",
-                unsafe_allow_html=True,
+        detalhes = {}
+        linhas = []
+        credito_atual = credito_inicial
+        for (ano, mes) in meses:
+            e4, e7, e12, e19, s11, s12, s19 = valores.get((ano, mes), (0, 0, 0, 0, 0, 0, 0))
+            c4 = e4 * 0.04
+            c7 = e7 * 0.07
+            c12 = e12 * 0.12
+            c19 = e19 * 0.19
+            total_cred = c4 + c7 + c12 + c19
+            d11 = s11 * 0.11
+            protege = s11 * 0.01
+            d12 = s12 * 0.12
+            d19 = s19 * 0.19
+            total_deb = d11 + protege + d12 + d19
+            consumo = min(total_deb, total_cred + credito_atual)
+            a_pagar = total_deb - consumo
+            credito_final = max(total_cred + credito_atual - consumo, 0.0)
+            detalhes[(ano, mes)] = {
+                "cred_4": c4,
+                "cred_7": c7,
+                "cred_12": c12,
+                "cred_19": c19,
+                "total_credito": total_cred,
+                "deb_11": d11,
+                "protege": protege,
+                "deb_12": d12,
+                "deb_19": d19,
+                "total_debito": total_deb,
+                "credito_inicial": credito_atual,
+                "consumo": consumo,
+                "a_pagar": a_pagar,
+                "credito_final": credito_final,
+            }
+            linhas.append(
+                {
+                    "Período": f"{ano}-{mes:02d}",
+                    "Ano": ano,
+                    "Mês": MESES_PT[mes],
+                    "Crédito Inicial": credito_atual,
+                    "Crédito do Mês": total_cred,
+                    "Débito do Mês": total_deb,
+                    "A Pagar": a_pagar,
+                    "Crédito Final": credito_final,
+                }
             )
-        st.metric("Total previsto a pagar (restante do ano)", format_brl(total_pagar))
+            credito_atual = credito_final
+        df_res = pd.DataFrame(linhas)
+        st.session_state["icms_resultados"] = detalhes
+        st.session_state["icms_df"] = df_res
+        st.session_state["icms_kpis"] = derive_kpis(df_res)
+        st.experimental_rerun()
+
+    if "icms_df" in st.session_state:
+        df_res = st.session_state["icms_df"]
+        kpis = st.session_state.get("icms_kpis", {})
+        render_kpi_bar(kpis)
+        render_smart_notices(kpis)
+        render_month_list(df_res, st.session_state.get("icms_resultados"))
 
 
 def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
@@ -373,14 +546,14 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
             debitos.append(bs * 0.0925)
             periodos.append((ano, mes))
         resultados = _rollforward(credito_inicial, creditos, debitos, periodos)
-        total_pagar = sum(r["A Pagar"] for r in resultados)
-        for r in resultados:
-            st.markdown(
-                f"<div style='background:#1a2433;border-radius:8px;padding:10px;margin-bottom:6px;'>"
-                f"<b>{r['Período']}</b> | Crédito Inicial {format_brl(r['Crédito Inicial'])} | "
-                f"Crédito do Mês {format_brl(r['Crédito do Mês'])} | Débito do Mês {format_brl(r['Débito do Mês'])} | "
-                f"A Pagar {format_brl(r['A Pagar'])} | Crédito Final {format_brl(r['Crédito Final'])}"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        st.metric("Total previsto a pagar (restante do ano)", format_brl(total_pagar))
+        df_res = pd.DataFrame(resultados)
+        st.session_state["pc_df"] = df_res
+        st.session_state["pc_kpis"] = derive_kpis(df_res)
+        st.experimental_rerun()
+
+    if "pc_df" in st.session_state:
+        df_res = st.session_state["pc_df"]
+        kpis = st.session_state.get("pc_kpis", {})
+        render_kpi_bar(kpis)
+        render_smart_notices(kpis)
+        render_month_list(df_res)
