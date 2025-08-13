@@ -557,4 +557,3 @@ def simulador_pis_cofins_manual(df=None, ano_sel=None, meses_sel=None):
         render_kpi_bar(kpis)
         render_smart_notices(kpis)
         render_month_list(df_res)
-
